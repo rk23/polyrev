@@ -1,0 +1,107 @@
+version: 1
+
+target: "."
+concurrency: 6
+report_dir: reports/
+dry_run: false
+
+github:
+  enabled: true
+  repo: null
+  labels: ["polyrev", "automated-review"]
+  assignees: []
+  dedupe: true
+  dedupe_action: skip
+
+providers:
+  claude_cli:
+    binary: claude
+    tools: ["Read", "Grep", "Glob"]
+    permission_mode: acceptEdits
+
+  codex_cli:
+    binary: codex
+    model: gpt-4.1
+
+retry:
+  max_attempts: 3
+  backoff_base_ms: 1000
+
+timeout_sec: 300
+max_files: 50
+launch_delay_ms: 500
+
+scopes:
+  backend:
+    paths:
+      - src/
+      - lib/
+    include:
+      - "**/*.py"
+    exclude:
+      - "**/migrations/**"
+      - "**/*_test.py"
+      - "**/tests/**"
+
+  frontend:
+    paths:
+      - web/
+      - app/
+    include:
+      - "**/*.ts"
+      - "**/*.tsx"
+    exclude:
+      - "**/*.test.ts"
+      - "**/*.test.tsx"
+      - "**/__mocks__/**"
+
+  ios:
+    paths:
+      - ios/
+    include:
+      - "**/*.swift"
+    exclude:
+      - "**/Generated/**"
+
+reviewers:
+  - id: security-python
+    name: Python Security Audit
+    enabled: true
+    provider: claude_cli
+    scopes: [backend]
+    prompt_file: prompts/security-python.md
+    priority_default: p1
+    max_files: 100
+    timeout_sec: 600
+
+  - id: security-swift
+    name: Swift/iOS Security Audit
+    enabled: true
+    provider: claude_cli
+    scopes: [ios]
+    prompt_file: prompts/security-swift.md
+    priority_default: p1
+
+  - id: api-contracts
+    name: API Contract Consistency
+    enabled: true
+    provider: claude_cli
+    scopes: [backend, ios]
+    prompt_file: prompts/api-contracts.md
+    priority_default: p0
+
+  - id: dry-violations
+    name: DRY Principle Violations
+    enabled: true
+    provider: claude_cli
+    scopes: [backend, frontend]
+    prompt_file: prompts/dry.md
+    priority_default: p2
+
+  - id: error-handling
+    name: Error Handling Review
+    enabled: true
+    provider: claude_cli
+    scopes: [backend]
+    prompt_file: prompts/error-handling.md
+    priority_default: p2
