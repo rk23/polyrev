@@ -27,6 +27,10 @@ cargo install --path .
 ## Running the Tool
 
 ```bash
+# Initialize: analyze repo, generate config + prompts
+cargo run -- init --dry-run
+cargo run -- init --force
+
 # Run reviewers
 cargo run -- run --config examples/polyrev.yaml
 cargo run -- run --config examples/polyrev.yaml --dry-run
@@ -45,6 +49,7 @@ Polyrev is a parallel code review orchestrator that runs multiple AI-powered rev
 ### Module Structure
 
 - **cli/** - Command handlers (`run`, `issue`, `init`, `schema` subcommands)
+  - `init.rs` - Repo analysis (languages, frameworks) + AI-powered config/prompt generation
 - **config/** - YAML config parsing and types, including `Reviewer`, `Scope`, and `Priority` definitions
 - **discovery/** - File discovery: scope resolution, glob/ignore patterns, git diff filtering
 - **provider/** - CLI provider abstraction (`claude.rs`, `codex.rs`) - spawns external CLIs and parses output
@@ -53,8 +58,9 @@ Polyrev is a parallel code review orchestrator that runs multiple AI-powered rev
   - `executor.rs` - Single reviewer execution with chunking for large file sets
   - `retry.rs` - Retry logic for transient failures
 - **parser/** - Extracts JSON findings from raw CLI output (`finding.rs`, `json.rs`, `markdown.rs`)
+- **postprocess/** - Post-run aggregation: collects findings, invokes AI for deduplication/clustering
 - **github/** - Issue creation and deduplication against existing issues
-- **output/** - Report generation (markdown + JSON findings files)
+- **output/** - Report generation (markdown + JSON findings, summary reports)
 - **state.rs** - Daily idempotency tracking (stores last run timestamps)
 
 ### Key Data Flow

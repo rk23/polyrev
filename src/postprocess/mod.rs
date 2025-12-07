@@ -41,19 +41,36 @@ struct ReducedOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReducedFinding {
     /// Fingerprints of original findings that were merged into this one
+    #[serde(default)]
     pub merged_from: Vec<String>,
+
+    #[serde(default)]
     pub id: String,
+
     #[serde(default, alias = "type")]
     pub finding_type: String,
+
+    #[serde(default)]
     pub title: String,
+
+    #[serde(default)]
     pub priority: String,
+
+    #[serde(default)]
     pub file: PathBuf,
+
     #[serde(default)]
     pub line: u32,
+
+    #[serde(default)]
     pub description: String,
+
+    #[serde(default)]
     pub remediation: String,
+
     #[serde(default)]
     pub acceptance_criteria: Vec<String>,
+
     #[serde(default)]
     pub references: Vec<String>,
 }
@@ -357,22 +374,61 @@ fn try_parse_reduced(s: &str) -> Option<ReducedOutput> {
     // Try to find JSON in the string (might be wrapped in markdown code blocks)
     let json_str = extract_json(s)?;
 
-    match serde_json::from_str::<ReducedOutput>(&json_str) {
-        Ok(output) => Some(output),
-        Err(e) => {
-            debug!("Failed to parse reduced output: {}", e);
-            None
+    // Try 1: Expected format {findings: [...], clusters: [...], summary: ...}
+    if let Ok(output) = serde_json::from_str::<ReducedOutput>(&json_str) {
+        return Some(output);
+    }
+
+    // Try 2: Just {findings: [...]} without other fields
+    #[derive(Deserialize)]
+    struct FindingsOnly {
+        findings: Vec<ReducedFinding>,
+    }
+    if let Ok(fo) = serde_json::from_str::<FindingsOnly>(&json_str) {
+        return Some(ReducedOutput {
+            findings: fo.findings,
+            clusters: vec![],
+            summary: None,
+        });
+    }
+
+    // Try 3: Direct array of findings [...]
+    if let Ok(findings) = serde_json::from_str::<Vec<ReducedFinding>>(&json_str) {
+        return Some(ReducedOutput {
+            findings,
+            clusters: vec![],
+            summary: None,
+        });
+    }
+
+    // Try 4: Parse as generic Value and extract findings
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+        if let Some(findings_val) = value.get("findings") {
+            if let Ok(findings) = serde_json::from_value::<Vec<ReducedFinding>>(findings_val.clone()) {
+                let clusters = value.get("clusters")
+                    .and_then(|c| serde_json::from_value::<Vec<FindingCluster>>(c.clone()).ok())
+                    .unwrap_or_default();
+                let summary = value.get("summary")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+                return Some(ReducedOutput { findings, clusters, summary });
+            }
         }
     }
+
+    debug!("Failed to parse reduced output from: {}...", &json_str.chars().take(200).collect::<String>());
+    None
 }
 
-/// Extract JSON object from a string that might contain markdown code blocks
+/// Extract JSON object or array from a string that might contain markdown code blocks
 fn extract_json(s: &str) -> Option<String> {
-    // First try: the whole string is valid JSON
-    if s.trim().starts_with('{')
-        && serde_json::from_str::<serde_json::Value>(s.trim()).is_ok()
+    let trimmed = s.trim();
+
+    // First try: the whole string is valid JSON (object or array)
+    if (trimmed.starts_with('{') || trimmed.starts_with('['))
+        && serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
     {
-        return Some(s.trim().to_string());
+        return Some(trimmed.to_string());
     }
 
     // Second try: extract from markdown code block
@@ -415,7 +471,12 @@ fn extract_json(s: &str) -> Option<String> {
 
 /// Write the postprocess result to reduced.json
 fn write_result(report_dir: &Path, result: &PostprocessResult) -> Result<(), PostprocessError> {
+    // Ensure the directory exists
+    std::fs::create_dir_all(report_dir)?;
+
     let out_path = report_dir.join("reduced.json");
+    debug!("Writing reduced.json to: {}", out_path.display());
+
     let json = serde_json::to_string_pretty(result)?;
     std::fs::write(&out_path, json)?;
     info!("Wrote reduced findings to {}", out_path.display());
