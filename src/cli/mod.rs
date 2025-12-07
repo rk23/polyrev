@@ -30,7 +30,7 @@ pub enum Commands {
     /// Create GitHub issues from reports
     Issue(IssueArgs),
 
-    /// Initialize GitHub repo with required labels
+    /// Initialize polyrev: analyze repo, generate config and prompts
     Init(InitArgs),
 
     /// Print JSON Schema for config validation
@@ -105,15 +105,39 @@ pub struct IssueArgs {
 
 #[derive(Parser, Clone)]
 pub struct InitArgs {
-    /// Repository to initialize (owner/repo)
-    #[arg(long)]
-    pub repo: Option<String>,
+    /// Directory to analyze (default: current directory)
+    #[arg(long, default_value = ".")]
+    pub target: PathBuf,
 
-    /// Config file (for default repo)
+    /// Output path for generated config
     #[arg(long, default_value = "polyrev.yaml")]
     pub config: PathBuf,
 
-    /// Preview labels without creating
+    /// Output directory for generated prompts
+    #[arg(long, default_value = "prompts")]
+    pub prompts_dir: PathBuf,
+
+    /// Number of reviewers to generate (1-6)
+    #[arg(long, default_value = "3", value_parser = clap::value_parser!(u8).range(1..=6))]
+    pub reviewers: u8,
+
+    /// Provider to use for generation (claude_cli or codex_cli)
+    #[arg(long, default_value = "claude_cli")]
+    pub provider: String,
+
+    /// Also create GitHub labels (requires --repo)
+    #[arg(long)]
+    pub labels: bool,
+
+    /// Repository for label creation (owner/repo)
+    #[arg(long)]
+    pub repo: Option<String>,
+
+    /// Preview without writing files
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Overwrite existing files
+    #[arg(long)]
+    pub force: bool,
 }

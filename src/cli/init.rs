@@ -1,7 +1,14 @@
+//! Initialize polyrev in a repository
+//!
+//! Analyzes the codebase, generates tailored config and prompts,
+//! and optionally creates GitHub labels.
+
 use crate::cli::InitArgs;
-use crate::config::Config;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 use std::process::Command;
-use tracing::info;
+use tracing::{debug, warn};
 
 /// Labels to create with their colors and descriptions
 const LABELS: &[(&str, &str, &str)] = &[
@@ -20,99 +27,637 @@ const LABELS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-pub fn execute(args: InitArgs) -> anyhow::Result<()> {
-    // Determine repo from args or config
-    let repo = if let Some(r) = args.repo {
-        r
-    } else if args.config.exists() {
-        let config = Config::load(&args.config)?;
-        config.github.repo.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No repository specified. Use --repo owner/repo or set github.repo in config"
-            )
-        })?
-    } else {
-        anyhow::bail!("No repository specified. Use --repo owner/repo");
-    };
+/// Analysis results from scanning the repository
+#[derive(Debug, Serialize)]
+struct RepoAnalysis {
+    /// Detected languages with file counts
+    languages: HashMap<String, LanguageInfo>,
+    /// Detected frameworks/libraries
+    frameworks: Vec<String>,
+    /// Detected directory structure (potential scopes)
+    directories: Vec<DirectoryInfo>,
+    /// Total files analyzed
+    total_files: usize,
+}
 
-    info!("Initializing labels for {}", repo);
+#[derive(Debug, Serialize)]
+struct LanguageInfo {
+    file_count: usize,
+    percentage: f32,
+    extensions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DirectoryInfo {
+    path: String,
+    primary_language: String,
+    file_count: usize,
+}
+
+/// Output expected from the AI generation
+#[derive(Debug, Deserialize)]
+struct GeneratedConfig {
+    /// The polyrev.yaml content
+    config_yaml: String,
+    /// Generated prompts: filename -> content
+    prompts: Vec<GeneratedPrompt>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeneratedPrompt {
+    filename: String,
+    content: String,
+}
+
+pub fn execute(args: InitArgs) -> anyhow::Result<()> {
+    // Check for existing files
+    if !args.force {
+        if args.config.exists() {
+            anyhow::bail!(
+                "Config file '{}' already exists. Use --force to overwrite.",
+                args.config.display()
+            );
+        }
+        if args.prompts_dir.exists() && std::fs::read_dir(&args.prompts_dir)?.next().is_some() {
+            anyhow::bail!(
+                "Prompts directory '{}' is not empty. Use --force to overwrite.",
+                args.prompts_dir.display()
+            );
+        }
+    }
+
+    // Validate --labels requires --repo
+    if args.labels && args.repo.is_none() {
+        anyhow::bail!("--labels requires --repo to be specified");
+    }
+
+    println!("Analyzing repository...");
+
+    // Phase 1: Analyze the repository
+    let analysis = analyze_repo(&args.target)?;
+
+    // Display analysis results
+    println!("\n  Languages:");
+    let mut langs: Vec<_> = analysis.languages.iter().collect();
+    langs.sort_by(|a, b| b.1.percentage.partial_cmp(&a.1.percentage).unwrap());
+    for (lang, info) in langs.iter().take(5) {
+        println!("    {} ({:.0}%)", lang, info.percentage);
+    }
+
+    if !analysis.frameworks.is_empty() {
+        println!("\n  Frameworks:");
+        for fw in &analysis.frameworks {
+            println!("    {}", fw);
+        }
+    }
+
+    println!("\n  Structure:");
+    for dir in analysis.directories.iter().take(5) {
+        println!(
+            "    {}/ → {} ({} files)",
+            dir.path, dir.primary_language, dir.file_count
+        );
+    }
 
     if args.dry_run {
-        println!("\nDRY RUN - would create the following labels:\n");
-        for (name, color, description) in LABELS {
-            println!("  {} (#{}) - {}", name, color, description);
+        println!("\nDRY RUN - would generate:");
+        println!("  Config: {}", args.config.display());
+        println!("  Prompts: {}/ ({} reviewers)", args.prompts_dir.display(), args.reviewers);
+        if args.labels {
+            println!("  Labels: {} labels in {}", LABELS.len(), args.repo.as_deref().unwrap_or("?"));
         }
         return Ok(());
     }
 
-    let mut created = 0;
-    let mut existed = 0;
-    let mut errors = 0;
+    // Phase 2: Generate config and prompts via AI
+    println!("\nGenerating config via {}...", args.provider);
 
-    for (name, color, description) in LABELS {
-        match create_label(&repo, name, color, description) {
-            Ok(LabelResult::Created) => {
-                info!("Created label: {}", name);
-                created += 1;
-            }
-            Ok(LabelResult::Exists) => {
-                info!("Label already exists: {}", name);
-                existed += 1;
-            }
-            Err(e) => {
-                info!("Failed to create label {}: {}", name, e);
-                errors += 1;
-            }
-        }
+    let generated = generate_config(&args, &analysis)?;
+
+    // Phase 3: Write output files
+    println!("\nWriting files:");
+
+    // Write config
+    std::fs::write(&args.config, &generated.config_yaml)?;
+    println!("  ✓ {}", args.config.display());
+
+    // Create prompts directory and write prompts
+    std::fs::create_dir_all(&args.prompts_dir)?;
+    for prompt in &generated.prompts {
+        let path = args.prompts_dir.join(&prompt.filename);
+        std::fs::write(&path, &prompt.content)?;
+        println!("  ✓ {}", path.display());
     }
 
-    println!(
-        "\nDone: {} created, {} already existed, {} errors",
-        created, existed, errors
-    );
+    // Phase 4: Create labels if requested
+    if args.labels {
+        println!("\nCreating GitHub labels...");
+        create_labels(args.repo.as_deref().unwrap())?;
+    }
 
-    if errors > 0 {
-        anyhow::bail!("Some labels failed to create");
+    // Done - show next steps
+    println!("\nDone! Next steps:");
+    println!("  1. Review generated files and customize as needed");
+    if !args.labels {
+        println!("  2. Run: polyrev init --labels --repo owner/repo");
+        println!("  3. Run: polyrev run --dry-run");
+    } else {
+        println!("  2. Run: polyrev run --dry-run");
     }
 
     Ok(())
 }
 
-enum LabelResult {
-    Created,
-    Exists,
+/// Analyze the repository to detect languages, frameworks, and structure
+fn analyze_repo(target: &Path) -> anyhow::Result<RepoAnalysis> {
+    use ignore::WalkBuilder;
+
+    let mut language_files: HashMap<String, Vec<String>> = HashMap::new();
+    let mut dir_stats: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut total_files = 0;
+
+    // Build walker that respects .gitignore
+    let walker = WalkBuilder::new(target)
+        .hidden(true) // skip hidden files/dirs
+        .git_ignore(true) // respect .gitignore
+        .git_global(true) // respect global gitignore
+        .git_exclude(true) // respect .git/info/exclude
+        .filter_entry(|e| !is_always_ignored(e.path()))
+        .build();
+
+    // Walk the directory tree
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+
+        let path = entry.path();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if let Some(lang) = extension_to_language(ext) {
+                total_files += 1;
+
+                // Track language
+                language_files
+                    .entry(lang.to_string())
+                    .or_default()
+                    .push(ext.to_string());
+
+                // Track directory stats
+                if let Some(parent) = path.strip_prefix(target).ok().and_then(|p| p.iter().next()) {
+                    let dir_name = parent.to_string_lossy().to_string();
+                    *dir_stats
+                        .entry(dir_name)
+                        .or_default()
+                        .entry(lang.to_string())
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Handle case where no files were found
+    if total_files == 0 {
+        return Ok(RepoAnalysis {
+            languages: HashMap::new(),
+            frameworks: Vec::new(),
+            directories: Vec::new(),
+            total_files: 0,
+        });
+    }
+
+    // Build language info
+    let mut languages = HashMap::new();
+    for (lang, exts) in &language_files {
+        let file_count = exts.len();
+        let mut unique_exts: Vec<_> = exts.to_vec();
+        unique_exts.sort();
+        unique_exts.dedup();
+
+        languages.insert(
+            lang.clone(),
+            LanguageInfo {
+                file_count,
+                percentage: (file_count as f32 / total_files as f32) * 100.0,
+                extensions: unique_exts,
+            },
+        );
+    }
+
+    // Detect frameworks
+    let frameworks = detect_frameworks(target)?;
+
+    // Build directory info
+    let mut directories: Vec<_> = dir_stats
+        .iter()
+        .map(|(path, lang_counts)| {
+            let (primary_lang, _) = lang_counts
+                .iter()
+                .max_by_key(|(_, c)| *c)
+                .map(|(l, c)| (l.clone(), *c))
+                .unwrap_or_else(|| ("Unknown".to_string(), 0));
+
+            let total: usize = lang_counts.values().sum();
+            DirectoryInfo {
+                path: path.clone(),
+                primary_language: primary_lang,
+                file_count: total,
+            }
+        })
+        .collect();
+
+    directories.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+
+    Ok(RepoAnalysis {
+        languages,
+        frameworks,
+        directories,
+        total_files,
+    })
 }
 
-fn create_label(
-    repo: &str,
-    name: &str,
-    color: &str,
-    description: &str,
-) -> anyhow::Result<LabelResult> {
-    let output = Command::new("gh")
-        .args([
-            "label",
-            "create",
-            name,
-            "--repo",
-            repo,
-            "--color",
-            color,
-            "--description",
-            description,
-        ])
-        .output()?;
+/// Directories to always ignore (even if not in .gitignore)
+fn is_always_ignored(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-    if output.status.success() {
-        return Ok(LabelResult::Created);
+    // These are commonly committed but not useful for analysis
+    matches!(
+        name,
+        "reports" // polyrev output
+            | "coverage"
+            | ".nyc_output"
+            | "htmlcov"
+            | ".pytest_cache"
+            | ".mypy_cache"
+            | ".ruff_cache"
+            | "*.egg-info"
+    )
+}
+
+/// Map file extension to language
+fn extension_to_language(ext: &str) -> Option<&'static str> {
+    match ext.to_lowercase().as_str() {
+        "py" | "pyi" => Some("Python"),
+        "js" | "mjs" | "cjs" => Some("JavaScript"),
+        "ts" | "mts" | "cts" => Some("TypeScript"),
+        "tsx" => Some("TypeScript/React"),
+        "jsx" => Some("JavaScript/React"),
+        "rs" => Some("Rust"),
+        "go" => Some("Go"),
+        "swift" => Some("Swift"),
+        "kt" | "kts" => Some("Kotlin"),
+        "java" => Some("Java"),
+        "rb" => Some("Ruby"),
+        "php" => Some("PHP"),
+        "cs" => Some("C#"),
+        "c" | "h" => Some("C"),
+        "cpp" | "cc" | "cxx" | "hpp" => Some("C++"),
+        "sql" => Some("SQL"),
+        "sh" | "bash" | "zsh" => Some("Shell"),
+        "yaml" | "yml" => Some("YAML"),
+        "json" => Some("JSON"),
+        "md" | "markdown" => Some("Markdown"),
+        "html" | "htm" => Some("HTML"),
+        "css" | "scss" | "sass" | "less" => Some("CSS"),
+        "ex" | "exs" => Some("Elixir"),
+        "erl" | "hrl" => Some("Erlang"),
+        "hs" => Some("Haskell"),
+        "ml" | "mli" => Some("OCaml"),
+        "scala" => Some("Scala"),
+        "clj" | "cljs" | "cljc" => Some("Clojure"),
+        "lua" => Some("Lua"),
+        "r" => Some("R"),
+        "jl" => Some("Julia"),
+        "dart" => Some("Dart"),
+        "vue" => Some("Vue"),
+        "svelte" => Some("Svelte"),
+        _ => None,
+    }
+}
+
+/// Detect frameworks from manifest files
+fn detect_frameworks(target: &Path) -> anyhow::Result<Vec<String>> {
+    let mut frameworks = Vec::new();
+
+    // Check package.json for JS/TS frameworks
+    let package_json = target.join("package.json");
+    if package_json.exists() {
+        if let Ok(content) = std::fs::read_to_string(&package_json) {
+            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                let deps = pkg
+                    .get("dependencies")
+                    .and_then(|d| d.as_object())
+                    .into_iter()
+                    .flat_map(|d| d.keys())
+                    .chain(
+                        pkg.get("devDependencies")
+                            .and_then(|d| d.as_object())
+                            .into_iter()
+                            .flat_map(|d| d.keys()),
+                    );
+
+                for dep in deps {
+                    match dep.as_str() {
+                        "react" => frameworks.push("React".to_string()),
+                        "next" => frameworks.push("Next.js".to_string()),
+                        "vue" => frameworks.push("Vue.js".to_string()),
+                        "nuxt" => frameworks.push("Nuxt.js".to_string()),
+                        "@angular/core" => frameworks.push("Angular".to_string()),
+                        "svelte" => frameworks.push("Svelte".to_string()),
+                        "express" => frameworks.push("Express".to_string()),
+                        "fastify" => frameworks.push("Fastify".to_string()),
+                        "nestjs" | "@nestjs/core" => frameworks.push("NestJS".to_string()),
+                        "prisma" | "@prisma/client" => frameworks.push("Prisma".to_string()),
+                        "drizzle-orm" => frameworks.push("Drizzle".to_string()),
+                        "tailwindcss" => frameworks.push("Tailwind CSS".to_string()),
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Check pyproject.toml / requirements.txt for Python frameworks
+    let pyproject = target.join("pyproject.toml");
+    let requirements = target.join("requirements.txt");
 
-    // Check if label already exists
-    if stderr.contains("already exists") {
-        return Ok(LabelResult::Exists);
+    let python_deps = if pyproject.exists() {
+        std::fs::read_to_string(&pyproject).unwrap_or_default()
+    } else if requirements.exists() {
+        std::fs::read_to_string(&requirements).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let python_deps_lower = python_deps.to_lowercase();
+    if python_deps_lower.contains("django") {
+        frameworks.push("Django".to_string());
+    }
+    if python_deps_lower.contains("fastapi") {
+        frameworks.push("FastAPI".to_string());
+    }
+    if python_deps_lower.contains("flask") {
+        frameworks.push("Flask".to_string());
+    }
+    if python_deps_lower.contains("sqlalchemy") {
+        frameworks.push("SQLAlchemy".to_string());
+    }
+    if python_deps_lower.contains("pydantic") {
+        frameworks.push("Pydantic".to_string());
+    }
+    if python_deps_lower.contains("pytest") {
+        frameworks.push("pytest".to_string());
+    }
+    if python_deps_lower.contains("celery") {
+        frameworks.push("Celery".to_string());
     }
 
-    Err(anyhow::anyhow!("{}", stderr.trim()))
+    // Check Cargo.toml for Rust crates
+    let cargo_toml = target.join("Cargo.toml");
+    if cargo_toml.exists() {
+        if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+            let content_lower = content.to_lowercase();
+            if content_lower.contains("tokio") {
+                frameworks.push("Tokio".to_string());
+            }
+            if content_lower.contains("axum") {
+                frameworks.push("Axum".to_string());
+            }
+            if content_lower.contains("actix") {
+                frameworks.push("Actix".to_string());
+            }
+            if content_lower.contains("diesel") {
+                frameworks.push("Diesel".to_string());
+            }
+            if content_lower.contains("sqlx") {
+                frameworks.push("SQLx".to_string());
+            }
+            if content_lower.contains("serde") {
+                frameworks.push("Serde".to_string());
+            }
+        }
+    }
+
+    // Check for iOS/macOS
+    let podfile = target.join("Podfile");
+    let package_swift = target.join("Package.swift");
+    if podfile.exists() || package_swift.exists() {
+        frameworks.push("iOS/macOS".to_string());
+    }
+    if target.join("Podfile").exists() {
+        if let Ok(content) = std::fs::read_to_string(target.join("Podfile")) {
+            if content.contains("Alamofire") {
+                frameworks.push("Alamofire".to_string());
+            }
+        }
+    }
+
+    // Check for Go
+    let go_mod = target.join("go.mod");
+    if go_mod.exists() {
+        if let Ok(content) = std::fs::read_to_string(&go_mod) {
+            if content.contains("gin-gonic") {
+                frameworks.push("Gin".to_string());
+            }
+            if content.contains("go-chi") || content.contains("chi") {
+                frameworks.push("Chi".to_string());
+            }
+            if content.contains("echo") {
+                frameworks.push("Echo".to_string());
+            }
+            if content.contains("gorm") {
+                frameworks.push("GORM".to_string());
+            }
+        }
+    }
+
+    // Dedupe and sort
+    frameworks.sort();
+    frameworks.dedup();
+
+    Ok(frameworks)
+}
+
+/// Generate config and prompts using the AI provider
+fn generate_config(args: &InitArgs, analysis: &RepoAnalysis) -> anyhow::Result<GeneratedConfig> {
+    // Load the scaffold prompt
+    let scaffold_prompt = include_str!("../../prompts/scaffold.md");
+
+    // Build the full prompt with analysis
+    let analysis_json = serde_json::to_string_pretty(analysis)?;
+    let full_prompt = format!(
+        "{}\n\n## Repository Analysis\n\n```json\n{}\n```\n\n## Generation Parameters\n\n- Number of reviewers to generate: {}\n- Prompts directory: {}\n",
+        scaffold_prompt,
+        analysis_json,
+        args.reviewers,
+        args.prompts_dir.display()
+    );
+
+    debug!("Scaffold prompt length: {} bytes", full_prompt.len());
+
+    // Invoke the CLI
+    let output = invoke_provider(&args.provider, &full_prompt, &args.target)?;
+
+    // Parse the output
+    parse_generated_output(&output)
+}
+
+/// Invoke the provider CLI
+fn invoke_provider(provider: &str, prompt: &str, working_dir: &Path) -> anyhow::Result<String> {
+    let is_claude = provider == "claude_cli" || provider == "claude";
+
+    let output = if is_claude {
+        Command::new("claude")
+            .current_dir(working_dir)
+            .env_remove("ANTHROPIC_API_KEY")
+            .args([
+                "-p",
+                prompt,
+                "--output-format",
+                "json",
+                "--allowedTools",
+                "",
+                "--permission-mode",
+                "default",
+            ])
+            .output()?
+    } else {
+        Command::new("codex")
+            .current_dir(working_dir)
+            .args(["exec", prompt])
+            .output()?
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Provider failed: {}", stderr);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Parse the generated output from the AI
+fn parse_generated_output(raw: &str) -> anyhow::Result<GeneratedConfig> {
+    // Claude wraps result in {"result": "...", ...} JSON
+    #[derive(Deserialize)]
+    struct ClaudeOutput {
+        result: String,
+    }
+
+    // Try Claude format first
+    if let Ok(claude_out) = serde_json::from_str::<ClaudeOutput>(raw) {
+        if let Some(config) = try_parse_generated(&claude_out.result) {
+            return Ok(config);
+        }
+    }
+
+    // Try direct parse
+    if let Some(config) = try_parse_generated(raw) {
+        return Ok(config);
+    }
+
+    anyhow::bail!("Could not parse generated config from provider output")
+}
+
+fn try_parse_generated(s: &str) -> Option<GeneratedConfig> {
+    // Try to find JSON in the string
+    let json_str = extract_json(s)?;
+
+    match serde_json::from_str::<GeneratedConfig>(&json_str) {
+        Ok(config) => Some(config),
+        Err(e) => {
+            debug!("Failed to parse generated config: {}", e);
+            None
+        }
+    }
+}
+
+/// Extract JSON object from a string that might contain markdown code blocks
+fn extract_json(s: &str) -> Option<String> {
+    // First try: the whole string is valid JSON
+    if s.trim().starts_with('{')
+        && serde_json::from_str::<serde_json::Value>(s.trim()).is_ok()
+    {
+        return Some(s.trim().to_string());
+    }
+
+    // Second try: extract from markdown code block
+    let re = regex::Regex::new(r"```(?:json)?\s*\n?([\s\S]*?)\n?```").ok()?;
+    for cap in re.captures_iter(s) {
+        let potential_json = cap.get(1)?.as_str().trim();
+        if serde_json::from_str::<serde_json::Value>(potential_json).is_ok() {
+            return Some(potential_json.to_string());
+        }
+    }
+
+    // Third try: find JSON object pattern
+    let brace_start = s.find('{')?;
+    let mut depth = 0;
+    let mut end = brace_start;
+
+    for (i, c) in s[brace_start..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = brace_start + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if depth == 0 && end > brace_start {
+        let potential_json = &s[brace_start..end];
+        if serde_json::from_str::<serde_json::Value>(potential_json).is_ok() {
+            return Some(potential_json.to_string());
+        }
+    }
+
+    None
+}
+
+/// Create GitHub labels
+fn create_labels(repo: &str) -> anyhow::Result<()> {
+    let mut errors = 0;
+
+    for (name, color, description) in LABELS {
+        let output = Command::new("gh")
+            .args([
+                "label",
+                "create",
+                name,
+                "--repo",
+                repo,
+                "--color",
+                color,
+                "--description",
+                description,
+            ])
+            .output()?;
+
+        if output.status.success() {
+            println!("  ✓ {} (created)", name);
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("already exists") {
+                println!("  ✓ {} (exists)", name);
+            } else {
+                println!("  ✗ {} ({})", name, stderr.trim());
+                errors += 1;
+            }
+        }
+    }
+
+    if errors > 0 {
+        warn!("{} labels failed to create", errors);
+    }
+
+    Ok(())
 }
