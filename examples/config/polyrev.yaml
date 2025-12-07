@@ -27,7 +27,7 @@ retry:
   max_attempts: 3
   backoff_base_ms: 1000
 
-timeout_sec: 300
+timeout_sec: 3600
 max_files: 50
 launch_delay_ms: 500
 
@@ -35,7 +35,7 @@ postprocess:
   enabled: true
   tool: claude_cli          # or codex_cli
   prompt_file: prompts/reduce.md
-  timeout_sec: 300
+  timeout_sec: 3600
   min_findings: 2           # skip reduction if fewer findings
 
 scopes:
