@@ -506,13 +506,33 @@ fn generate_config(args: &InitArgs, analysis: &RepoAnalysis) -> anyhow::Result<G
     parse_generated_output(&output)
 }
 
+/// Find the claude binary, checking common install locations
+fn find_claude_binary() -> String {
+    // Check if 'claude' is in PATH
+    if Command::new("claude").arg("--version").output().is_ok() {
+        return "claude".to_string();
+    }
+
+    // Check common install location
+    if let Some(home) = std::env::var_os("HOME") {
+        let local_path = Path::new(&home).join(".claude/local/claude");
+        if local_path.exists() {
+            return local_path.to_string_lossy().to_string();
+        }
+    }
+
+    // Fall back to 'claude' and let the error handling deal with it
+    "claude".to_string()
+}
+
 /// Invoke the provider CLI
 fn invoke_provider(provider: &str, prompt: &str, working_dir: &Path) -> anyhow::Result<String> {
     let is_claude = provider == "claude_cli" || provider == "claude";
 
-    let output = if is_claude {
-        Command::new("claude")
-            .current_dir(working_dir)
+    let (binary_name, mut cmd) = if is_claude {
+        let binary = find_claude_binary();
+        let mut cmd = Command::new(&binary);
+        cmd.current_dir(working_dir)
             .env_remove("ANTHROPIC_API_KEY")
             .args([
                 "-p",
@@ -523,14 +543,25 @@ fn invoke_provider(provider: &str, prompt: &str, working_dir: &Path) -> anyhow::
                 "",
                 "--permission-mode",
                 "default",
-            ])
-            .output()?
+            ]);
+        (binary, cmd)
     } else {
-        Command::new("codex")
-            .current_dir(working_dir)
-            .args(["exec", prompt])
-            .output()?
+        let mut cmd = Command::new("codex");
+        cmd.current_dir(working_dir).args(["exec", prompt]);
+        ("codex".to_string(), cmd)
     };
+
+    let output = cmd.output().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(
+                "'{}' command not found. Make sure {} CLI is installed and in your PATH, or at ~/.claude/local/claude",
+                binary_name,
+                if is_claude { "Claude Code" } else { "Codex" }
+            )
+        } else {
+            anyhow::anyhow!("Failed to run '{}': {}", binary_name, e)
+        }
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

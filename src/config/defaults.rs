@@ -29,6 +29,14 @@ pub fn default_launch_delay_ms() -> u64 {
 }
 
 pub fn default_claude_binary() -> PathBuf {
+    // Check common install location first
+    if let Some(home) = std::env::var_os("HOME") {
+        let local_path = PathBuf::from(home).join(".claude/local/claude");
+        if local_path.exists() {
+            return local_path;
+        }
+    }
+    // Fall back to PATH lookup
     PathBuf::from("claude")
 }
 
