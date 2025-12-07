@@ -170,11 +170,16 @@ Large file sets are automatically split into chunks. For multi-chunk reviews, po
 ### Streaming Reports
 Reports are written immediately as each reviewer completes, so partial results are preserved if the run is interrupted.
 
+### Postprocess Hook (Reducer-ready)
+Optional postprocess step aggregates findings (`reduced.json`) so you can tag/cluster or feed downstream tools. Configure under `postprocess` in `polyrev.yaml` and set `enabled: true`.
+
 ## Output
 
 Reports are written to dated directories: `reports/YYYY-MM-DD/`
 - `{reviewer_id}.md` - Per-reviewer markdown report with findings
 - `{reviewer_id}.findings.json` - Structured findings for issue creation
+- `summary.json` / `summary.md` - Aggregate per run
+- `reduced.json` - Aggregated findings when postprocess is enabled
 
 ## License
 

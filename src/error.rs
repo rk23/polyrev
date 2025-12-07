@@ -25,6 +25,9 @@ pub enum PolyrevError {
     #[error("GitHub error: {0}")]
     GitHub(#[from] GitHubError),
 
+    #[error("Postprocess error: {0}")]
+    Postprocess(#[from] PostprocessError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -131,4 +134,22 @@ pub enum GitHubError {
 
     #[error("Issue creation failed: {0}")]
     CreateFailed(String),
+}
+
+#[derive(Error, Debug)]
+pub enum PostprocessError {
+    #[error("CLI execution failed: {0}")]
+    CliExecution(String),
+
+    #[error("Failed to parse reduced output: {0}")]
+    ParseOutput(String),
+
+    #[error("Execution timed out after {0:?}")]
+    Timeout(std::time::Duration),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialize(#[from] serde_json::Error),
 }

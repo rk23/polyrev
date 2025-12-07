@@ -1,5 +1,7 @@
 use crate::cli::RunArgs;
 use crate::config::Config;
+use crate::output::write_summary;
+use crate::postprocess::run_postprocess;
 use crate::runner::{Orchestrator, RunOptions};
 use crate::state::State;
 use chrono::Local;
@@ -80,6 +82,27 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
     // Save state
     if let Err(e) = state.save(&config.target) {
         warn!("Failed to save state: {}", e);
+    }
+
+    // Write summary artifacts
+    if let Err(e) = write_summary(&report_dir, &report, &config.target) {
+        warn!("Failed to write summary: {}", e);
+    }
+
+    // Optional postprocess step (reducer / clustering)
+    match run_postprocess(&config, &report_dir).await {
+        Ok(Some(result)) => {
+            info!(
+                "Postprocess: {} -> {} findings",
+                result.original_count, result.reduced_count
+            );
+        }
+        Ok(None) => {
+            // Postprocess disabled or skipped
+        }
+        Err(e) => {
+            warn!("Postprocess step failed: {}", e);
+        }
     }
 
     // Summary

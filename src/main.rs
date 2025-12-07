@@ -8,6 +8,7 @@ mod error;
 mod github;
 mod output;
 mod parser;
+mod postprocess;
 mod provider;
 mod runner;
 mod state;

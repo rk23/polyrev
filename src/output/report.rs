@@ -67,7 +67,7 @@ pub fn write_reviewer_report(
             if !finding.finding_type.is_empty() {
                 content.push_str(&format!("- **Type:** `{}`\n", finding.finding_type));
             }
-            content.push_str("\n");
+            content.push('\n');
             content.push_str(&format!("{}\n\n", finding.description));
 
             if let Some(snippet) = &finding.snippet {
@@ -82,7 +82,7 @@ pub fn write_reviewer_report(
                 for criterion in &finding.acceptance_criteria {
                     content.push_str(&format!("- [ ] {}\n", criterion));
                 }
-                content.push_str("\n");
+                content.push('\n');
             }
 
             if !finding.references.is_empty() {
@@ -90,7 +90,7 @@ pub fn write_reviewer_report(
                 for reference in &finding.references {
                     content.push_str(&format!("- {}\n", reference));
                 }
-                content.push_str("\n");
+                content.push('\n');
             }
 
             content.push_str("---\n\n");

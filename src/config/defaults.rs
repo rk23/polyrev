@@ -59,3 +59,23 @@ pub fn default_backoff_base_ms() -> u64 {
 pub fn default_true() -> bool {
     true
 }
+
+pub fn default_postprocess_tool() -> String {
+    "claude_cli".to_string()
+}
+
+pub fn default_postprocess_prompt() -> std::path::PathBuf {
+    std::path::PathBuf::from("prompts/reduce.md")
+}
+
+pub fn default_postprocess_timeout() -> u64 {
+    300 // 5 minutes
+}
+
+pub fn default_postprocess_min_findings() -> usize {
+    2 // Only reduce if there are at least 2 findings
+}
+
+pub fn default_false() -> bool {
+    false
+}

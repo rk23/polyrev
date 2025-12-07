@@ -164,6 +164,7 @@ impl Orchestrator {
         // If all reviewers were skipped, return early with skipped results
         if reviewers.is_empty() {
             info!("All matching reviewers already ran today. Use --force to re-run.");
+            // Return skipped-only report so downstream steps (postprocess/summary) can still run.
             return Ok(RunReport {
                 reviewer_results: skipped_results,
                 total_duration: start.elapsed(),

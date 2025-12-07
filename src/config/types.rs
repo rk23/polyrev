@@ -34,6 +34,9 @@ pub struct Config {
     #[serde(default)]
     pub retry: RetryConfig,
 
+    #[serde(default)]
+    pub postprocess: PostProcessConfig,
+
     #[serde(default = "default_timeout_sec")]
     pub timeout_sec: u64,
 
@@ -80,22 +83,13 @@ pub enum DedupeAction {
     Reopen,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct ProvidersConfig {
     #[serde(default)]
     pub claude_cli: ClaudeCliConfig,
 
     #[serde(default)]
     pub codex_cli: CodexCliConfig,
-}
-
-impl Default for ProvidersConfig {
-    fn default() -> Self {
-        Self {
-            claude_cli: ClaudeCliConfig::default(),
-            codex_cli: CodexCliConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -152,6 +146,40 @@ impl Default for RetryConfig {
         Self {
             max_attempts: default_max_attempts(),
             backoff_base_ms: default_backoff_base_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct PostProcessConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+
+    /// Which CLI tool (e.g., claude_cli or codex_cli) to run the reducer/merger step
+    #[serde(default = "default_postprocess_tool")]
+    pub tool: String,
+
+    /// Path to the prompt file for the reduction step
+    #[serde(default = "default_postprocess_prompt")]
+    pub prompt_file: PathBuf,
+
+    /// Timeout in seconds for the postprocess CLI invocation
+    #[serde(default = "default_postprocess_timeout")]
+    pub timeout_sec: u64,
+
+    /// Minimum number of findings required to run postprocessing
+    #[serde(default = "default_postprocess_min_findings")]
+    pub min_findings: usize,
+}
+
+impl Default for PostProcessConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tool: default_postprocess_tool(),
+            prompt_file: default_postprocess_prompt(),
+            timeout_sec: default_postprocess_timeout(),
+            min_findings: default_postprocess_min_findings(),
         }
     }
 }

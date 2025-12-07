@@ -41,10 +41,10 @@ fn parse_findings_json(s: &str) -> Option<Vec<Finding>> {
 /// Extract JSON object from a string that might contain markdown code blocks
 fn extract_json(s: &str) -> Option<String> {
     // First try: the whole string is valid JSON
-    if s.trim().starts_with('{') {
-        if serde_json::from_str::<serde_json::Value>(s.trim()).is_ok() {
-            return Some(s.trim().to_string());
-        }
+    if s.trim().starts_with('{')
+        && serde_json::from_str::<serde_json::Value>(s.trim()).is_ok()
+    {
+        return Some(s.trim().to_string());
     }
 
     // Second try: extract from markdown code block
