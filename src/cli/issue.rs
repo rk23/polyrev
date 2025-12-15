@@ -22,9 +22,16 @@ pub async fn execute(args: IssueArgs) -> anyhow::Result<()> {
         info!("Loading findings from {} specified files", args.files.len());
         load_findings_from_files(&args.files)?
     } else {
-        // Scan report directory for all .findings.json files
-        info!("Scanning {:?} for findings", args.report_dir);
-        scan_findings_dir(&args.report_dir)?
+        // Check for reduced.json first (postprocessed findings)
+        let reduced_path = args.report_dir.join("reduced.json");
+        if reduced_path.exists() {
+            info!("Loading reduced findings from {:?}", reduced_path);
+            load_reduced_findings(&reduced_path)?
+        } else {
+            // Fall back to scanning for raw .findings.json files
+            info!("Scanning {:?} for findings", args.report_dir);
+            scan_findings_dir(&args.report_dir)?
+        }
     };
 
     if findings.is_empty() {
@@ -68,16 +75,24 @@ pub async fn execute(args: IssueArgs) -> anyhow::Result<()> {
             github_cfg.labels.clone()
         },
         github_cfg.assignees.clone(),
+        github_cfg.auto_fix.clone(),
+        config.providers.claude_cli.model.clone(),
     )?;
 
     let mut created = 0;
     let mut skipped = 0;
     let mut errors = 0;
+    let mut agents_triggered = 0;
 
     for (reviewer_id, finding) in &findings {
         match creator.create_or_update(finding, reviewer_id).await {
-            Ok(IssueResult::Created { url }) => {
-                info!("Created: {} -> {}", finding.title, url);
+            Ok(IssueResult::Created { url, agent_triggered }) => {
+                if agent_triggered {
+                    info!("Created: {} -> {} (triggered @{})", finding.title, url, github_cfg.auto_fix.agent);
+                    agents_triggered += 1;
+                } else {
+                    info!("Created: {} -> {}", finding.title, url);
+                }
                 created += 1;
             }
             Ok(IssueResult::Skipped { issue_number }) => {
@@ -102,10 +117,17 @@ pub async fn execute(args: IssueArgs) -> anyhow::Result<()> {
         }
     }
 
-    info!(
-        "Done: {} created, {} skipped, {} errors",
-        created, skipped, errors
-    );
+    if agents_triggered > 0 {
+        info!(
+            "Done: {} created, {} skipped, {} errors, {} agents triggered",
+            created, skipped, errors, agents_triggered
+        );
+    } else {
+        info!(
+            "Done: {} created, {} skipped, {} errors",
+            created, skipped, errors
+        );
+    }
 
     if errors > 0 {
         std::process::exit(1);
@@ -208,4 +230,74 @@ fn walkdir(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
     }
 
     Ok(results)
+}
+
+/// Load findings from reduced.json (postprocessed output)
+fn load_reduced_findings(
+    path: &Path,
+) -> anyhow::Result<Vec<(String, crate::parser::Finding)>> {
+    use crate::config::Priority;
+
+    #[derive(serde::Deserialize)]
+    struct ReducedOutput {
+        findings: Vec<ReducedFinding>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ReducedFinding {
+        #[serde(default)]
+        id: String,
+        #[serde(default, alias = "type")]
+        finding_type: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        priority: String,
+        #[serde(default)]
+        file: std::path::PathBuf,
+        #[serde(default)]
+        line: u32,
+        #[serde(default)]
+        snippet: Option<String>,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        remediation: String,
+        #[serde(default)]
+        acceptance_criteria: Vec<String>,
+        #[serde(default)]
+        references: Vec<String>,
+        #[serde(default)]
+        model: Option<String>,
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    let reduced: ReducedOutput = serde_json::from_str(&content)?;
+
+    let findings: Vec<(String, crate::parser::Finding)> = reduced
+        .findings
+        .into_iter()
+        .map(|rf| {
+            let priority = rf.priority.parse::<Priority>().unwrap_or_default();
+            let finding = crate::parser::Finding {
+                id: rf.id,
+                finding_type: rf.finding_type,
+                title: rf.title,
+                priority,
+                file: rf.file,
+                line: rf.line,
+                snippet: rf.snippet,
+                description: rf.description,
+                remediation: rf.remediation,
+                acceptance_criteria: rf.acceptance_criteria,
+                references: rf.references,
+                model: rf.model,
+            };
+            // Use "reduced" as the reviewer_id for postprocessed findings
+            ("reduced".to_string(), finding)
+        })
+        .collect();
+
+    info!("Loaded {} reduced findings from {:?}", findings.len(), path);
+    Ok(findings)
 }

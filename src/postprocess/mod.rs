@@ -150,17 +150,27 @@ pub async fn run_postprocess(
         config.postprocess.tool
     );
 
-    // Load the reduction prompt
-    let prompt_content = std::fs::read_to_string(&config.postprocess.prompt_file).map_err(|e| {
-        PostprocessError::Io(std::io::Error::new(
-            e.kind(),
-            format!(
-                "Failed to read prompt file '{}': {}",
-                config.postprocess.prompt_file.display(),
-                e
-            ),
-        ))
-    })?;
+    // Load the reduction prompt (fall back to embedded default if file doesn't exist)
+    let prompt_content = match std::fs::read_to_string(&config.postprocess.prompt_file) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            debug!(
+                "Prompt file '{}' not found, using embedded default",
+                config.postprocess.prompt_file.display()
+            );
+            include_str!("../../prompts/reduce.md").to_string()
+        }
+        Err(e) => {
+            return Err(PostprocessError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "Failed to read prompt file '{}': {}",
+                    config.postprocess.prompt_file.display(),
+                    e
+                ),
+            )));
+        }
+    };
 
     // Build the full prompt with findings
     let findings_json = serde_json::to_string_pretty(&sourced_findings)?;
@@ -282,6 +292,7 @@ async fn invoke_cli(
 
     let (binary, args) = if is_claude {
         let binary = &config.providers.claude_cli.binary;
+        let model = &config.providers.claude_cli.model;
         let tools = config.providers.claude_cli.tools.join(",");
         let permission_mode = &config.providers.claude_cli.permission_mode;
 
@@ -290,6 +301,8 @@ async fn invoke_cli(
             vec![
                 "-p".to_string(),
                 prompt.to_string(),
+                "--model".to_string(),
+                model.clone(),
                 "--output-format".to_string(),
                 "json".to_string(),
                 "--allowedTools".to_string(),

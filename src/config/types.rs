@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::defaults::*;
+use crate::planner::Perspective;
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct Config {
@@ -37,6 +38,9 @@ pub struct Config {
     #[serde(default)]
     pub postprocess: PostProcessConfig,
 
+    #[serde(default)]
+    pub planning: Option<PlanningConfig>,
+
     #[serde(default = "default_timeout_sec")]
     pub timeout_sec: u64,
 
@@ -51,6 +55,30 @@ pub struct Config {
 
     #[serde(default)]
     pub reviewers: Vec<Reviewer>,
+}
+
+/// Configuration for parallel planning perspectives
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct PlanningConfig {
+    /// Planning perspectives to run
+    #[serde(default)]
+    pub perspectives: Vec<Perspective>,
+
+    /// Path to the reducer prompt
+    #[serde(default)]
+    pub reducer_prompt: Option<PathBuf>,
+
+    /// Require human approval before enqueueing
+    #[serde(default = "default_true")]
+    pub require_human_approval: bool,
+
+    /// What to do with unresolved questions: "block", "ask", "proceed_with_defaults"
+    #[serde(default = "default_on_unresolved")]
+    pub on_unresolved_questions: String,
+}
+
+fn default_on_unresolved() -> String {
+    "block".to_string()
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
@@ -72,6 +100,35 @@ pub struct GithubConfig {
 
     #[serde(default)]
     pub dedupe_action: DedupeAction,
+
+    /// Auto-trigger an AI agent to fix created issues
+    #[serde(default)]
+    pub auto_fix: AutoFixConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct AutoFixConfig {
+    /// Enable automatic agent triggering on new issues
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+
+    /// Which agent to trigger: "claude" or "codex"
+    #[serde(default = "default_auto_fix_agent")]
+    pub agent: String,
+
+    /// Custom prompt to include in the comment
+    #[serde(default = "default_auto_fix_prompt")]
+    pub prompt: String,
+}
+
+impl Default for AutoFixConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            agent: default_auto_fix_agent(),
+            prompt: default_auto_fix_prompt(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
@@ -97,6 +154,9 @@ pub struct ClaudeCliConfig {
     #[serde(default = "default_claude_binary")]
     pub binary: PathBuf,
 
+    #[serde(default = "default_claude_model")]
+    pub model: String,
+
     #[serde(default = "default_claude_tools")]
     pub tools: Vec<String>,
 
@@ -108,6 +168,7 @@ impl Default for ClaudeCliConfig {
     fn default() -> Self {
         Self {
             binary: default_claude_binary(),
+            model: default_claude_model(),
             tools: default_claude_tools(),
             permission_mode: default_permission_mode(),
         }

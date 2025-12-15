@@ -33,6 +33,10 @@ pub struct Finding {
 
     #[serde(default)]
     pub references: Vec<String>,
+
+    /// Model that produced this finding (set after parsing)
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl Finding {
@@ -82,6 +86,7 @@ mod tests {
             remediation: "Fix it".to_string(),
             acceptance_criteria: vec![],
             references: vec![],
+            model: None,
         };
 
         let fp1 = finding.fingerprint("security-python");
@@ -105,6 +110,7 @@ mod tests {
             remediation: "Fix it".to_string(),
             acceptance_criteria: vec![],
             references: vec![],
+            model: None,
         };
 
         let fp1 = finding.fingerprint("security-python");
@@ -127,6 +133,7 @@ mod tests {
             remediation: "".to_string(),
             acceptance_criteria: vec![],
             references: vec![],
+            model: None,
         };
 
         assert_eq!(finding.normalize_snippet(), "foo bar baz");

@@ -116,6 +116,27 @@ pub async fn execute(args: RunArgs) -> anyhow::Result<()> {
         report.reviewer_results.len()
     );
 
+    // Create GitHub issues if requested
+    if args.create_issues {
+        let total_findings = totals.p0 + totals.p1 + totals.p2;
+        if total_findings > 0 {
+            info!("Creating GitHub issues...");
+            let issue_args = crate::cli::IssueArgs {
+                files: vec![],
+                report_dir: report_dir.clone(),
+                config: args.config.clone(),
+                dry_run: false,
+                force: false,
+                repo: None,
+            };
+            if let Err(e) = crate::cli::issue::execute(issue_args).await {
+                error!("Failed to create issues: {}", e);
+            }
+        } else {
+            info!("No findings to create issues for");
+        }
+    }
+
     // Exit with error if critical findings and flag set
     if args.fail_on_critical && totals.p0 > 0 {
         error!("Exiting with error: {} critical (p0) findings", totals.p0);

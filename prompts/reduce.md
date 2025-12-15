@@ -68,3 +68,20 @@ Return a JSON object with this structure:
 - Every original fingerprint must appear in exactly one finding's `merged_from` array
 - Generate new IDs using the pattern `REDUCED-NNN`
 - If no duplicates exist, return findings as-is with their fingerprint in `merged_from`
+
+## CRITICAL: Output Format
+
+You MUST output ONLY the JSON object. No explanatory text before or after.
+Do NOT include phrases like "Here is the result" or "Done. I've analyzed...".
+Your entire response must be valid JSON starting with `{` and ending with `}`.
+
+Example of WRONG output:
+```
+Done. I've analyzed the findings. Here is the result:
+{"findings": [...]}
+```
+
+Example of CORRECT output:
+```
+{"findings": [...], "clusters": [...], "summary": "..."}
+```

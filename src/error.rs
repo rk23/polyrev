@@ -153,3 +153,30 @@ pub enum PostprocessError {
     #[error("Serialization error: {0}")]
     Serialize(#[from] serde_json::Error),
 }
+
+#[derive(Error, Debug)]
+pub enum PlannerError {
+    #[error("No perspectives matched filters")]
+    NoPerspectivesMatched,
+
+    #[error("No fragments to reduce (all perspectives failed)")]
+    NoFragmentsToReduce,
+
+    #[error("CLI execution failed: {0}")]
+    CliExecution(String),
+
+    #[error("Failed to parse output: {0}")]
+    ParseOutput(String),
+
+    #[error("Failed to acquire semaphore: {0}")]
+    Semaphore(#[from] tokio::sync::AcquireError),
+
+    #[error("Provider error: {0}")]
+    Provider(#[from] ProviderError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialize(#[from] serde_json::Error),
+}

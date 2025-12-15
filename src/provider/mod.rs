@@ -48,6 +48,7 @@ pub fn create_runner(config: &Config, reviewer: &Reviewer) -> Arc<dyn Runner> {
     match reviewer.provider {
         Provider::ClaudeCli => Arc::new(ClaudeRunner {
             binary: config.providers.claude_cli.binary.clone(),
+            model: config.providers.claude_cli.model.clone(),
             tools: config.providers.claude_cli.tools.clone(),
             permission_mode: config.providers.claude_cli.permission_mode.clone(),
             working_dir: config.target.clone(),
@@ -56,6 +57,33 @@ pub fn create_runner(config: &Config, reviewer: &Reviewer) -> Arc<dyn Runner> {
             binary: config.providers.codex_cli.binary.clone(),
             model: config.providers.codex_cli.model.clone(),
             working_dir: config.target.clone(),
+        }),
+    }
+}
+
+/// Provider configuration for creating runners without a Reviewer
+#[derive(Debug, Clone)]
+pub struct ProviderConfig {
+    pub binary: PathBuf,
+    pub model: String,
+    pub tools: Vec<String>,
+    pub permission_mode: String,
+}
+
+/// Create a runner for a specific provider with explicit configuration
+pub fn create_runner_for_provider(provider: Provider, config: ProviderConfig) -> Arc<dyn Runner> {
+    match provider {
+        Provider::ClaudeCli => Arc::new(ClaudeRunner {
+            binary: config.binary,
+            model: config.model,
+            tools: config.tools,
+            permission_mode: config.permission_mode,
+            working_dir: PathBuf::from("."),
+        }),
+        Provider::CodexCli => Arc::new(CodexRunner {
+            binary: config.binary,
+            model: config.model,
+            working_dir: PathBuf::from("."),
         }),
     }
 }

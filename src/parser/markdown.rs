@@ -49,6 +49,7 @@ pub fn try_parse_markdown_table(
             remediation: recommendation.to_string(),
             acceptance_criteria: Vec::new(),
             references: Vec::new(),
+            model: None,
         });
     }
 

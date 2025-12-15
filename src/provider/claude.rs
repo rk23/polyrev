@@ -8,6 +8,7 @@ use tokio::time::timeout as tokio_timeout;
 
 pub struct ClaudeRunner {
     pub binary: PathBuf,
+    pub model: String,
     pub tools: Vec<String>,
     pub permission_mode: String,
     pub working_dir: PathBuf,
@@ -64,6 +65,8 @@ impl Runner for ClaudeRunner {
 
         cmd.arg("-p")
             .arg(&full_prompt)
+            .arg("--model")
+            .arg(&self.model)
             .arg("--output-format")
             .arg("json")
             .arg("--allowedTools")

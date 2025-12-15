@@ -149,10 +149,21 @@ pub fn execute(args: InitArgs) -> anyhow::Result<()> {
         println!("  ✓ {}", path.display());
     }
 
+    // Also write the reduce.md prompt for postprocessing
+    let reduce_path = args.prompts_dir.join("reduce.md");
+    std::fs::write(&reduce_path, include_str!("../../prompts/reduce.md"))?;
+    println!("  ✓ {}", reduce_path.display());
+
     // Phase 4: Create labels if requested
     if args.labels {
         println!("\nCreating GitHub labels...");
-        create_labels(args.repo.as_deref().unwrap())?;
+        // Extract reviewer IDs from prompt filenames (e.g., "security-python.md" -> "security-python")
+        let reviewer_ids: Vec<String> = generated
+            .prompts
+            .iter()
+            .map(|p| p.filename.trim_end_matches(".md").to_string())
+            .collect();
+        create_labels(args.repo.as_deref().unwrap(), &reviewer_ids)?;
     }
 
     // Done - show next steps
@@ -537,6 +548,8 @@ fn invoke_provider(provider: &str, prompt: &str, working_dir: &Path) -> anyhow::
             .args([
                 "-p",
                 prompt,
+                "--model",
+                "claude-opus-4-5-20251101",
                 "--output-format",
                 "json",
                 "--allowedTools",
@@ -655,35 +668,23 @@ fn extract_json(s: &str) -> Option<String> {
 }
 
 /// Create GitHub labels
-fn create_labels(repo: &str) -> anyhow::Result<()> {
+fn create_labels(repo: &str, reviewer_ids: &[String]) -> anyhow::Result<()> {
     let mut errors = 0;
 
+    // Create standard labels
     for (name, color, description) in LABELS {
-        let output = Command::new("gh")
-            .args([
-                "label",
-                "create",
-                name,
-                "--repo",
-                repo,
-                "--color",
-                color,
-                "--description",
-                description,
-            ])
-            .output()?;
+        create_single_label(repo, name, color, description, &mut errors);
+    }
 
-        if output.status.success() {
-            println!("  ✓ {} (created)", name);
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("already exists") {
-                println!("  ✓ {} (exists)", name);
-            } else {
-                println!("  ✗ {} ({})", name, stderr.trim());
-                errors += 1;
-            }
-        }
+    // Create reviewer labels
+    for reviewer_id in reviewer_ids {
+        create_single_label(
+            repo,
+            reviewer_id,
+            "C5DEF5", // Light purple for reviewer labels
+            &format!("Findings from {} reviewer", reviewer_id),
+            &mut errors,
+        );
     }
 
     if errors > 0 {
@@ -691,4 +692,39 @@ fn create_labels(repo: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn create_single_label(repo: &str, name: &str, color: &str, description: &str, errors: &mut u32) {
+    let output = Command::new("gh")
+        .args([
+            "label",
+            "create",
+            name,
+            "--repo",
+            repo,
+            "--color",
+            color,
+            "--description",
+            description,
+        ])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            println!("  ✓ {} (created)", name);
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if stderr.contains("already exists") {
+                println!("  ✓ {} (exists)", name);
+            } else {
+                println!("  ✗ {} ({})", name, stderr.trim());
+                *errors += 1;
+            }
+        }
+        Err(e) => {
+            println!("  ✗ {} ({})", name, e);
+            *errors += 1;
+        }
+    }
 }

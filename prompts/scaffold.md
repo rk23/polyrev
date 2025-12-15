@@ -24,13 +24,50 @@ Return a JSON object with this exact structure:
 
 ## Config Generation Guidelines
 
-The `config_yaml` should be valid YAML with:
+The `config_yaml` should be valid YAML with all these sections:
 
 ```yaml
 version: 1
 target: "."
 concurrency: 4
 report_dir: reports/
+timeout_sec: 3600
+max_files: 50
+launch_delay_ms: 500
+
+# GitHub integration (for issue creation)
+github:
+  # repo: owner/repo  # Uncomment and set for issue creation
+  labels: ["polyrev", "automated-review"]
+  dedupe: true
+  dedupe_action: skip  # skip, comment, or reopen
+  # Auto-fix: trigger AI agent to fix issues automatically
+  auto_fix:
+    enabled: false  # Set to true to enable
+    agent: claude   # claude or codex
+    prompt: "Please fix this issue following the remediation guidance above and create a pull request with your changes."
+
+# Provider configuration
+providers:
+  claude_cli:
+    model: claude-opus-4-5-20251101
+    tools: ["Read", "Grep", "Glob"]
+    permission_mode: acceptEdits
+  codex_cli:
+    model: gpt-5.1-codex-max
+
+# Retry settings for transient failures
+retry:
+  max_attempts: 3
+  backoff_base_ms: 1000
+
+# Post-processing: aggregate and deduplicate findings
+postprocess:
+  enabled: false  # Set to true to enable AI-powered deduplication
+  tool: claude_cli
+  prompt_file: prompts/reduce.md
+  timeout_sec: 600
+  min_findings: 2
 
 scopes:
   # Create scopes based on detected directory structure
@@ -50,6 +87,14 @@ reviewers:
     prompt_file: prompts/security-python.md
     priority_default: p1
 ```
+
+**Important config notes:**
+- Keep `postprocess.enabled: false` by default (user can enable later)
+- Keep `github.auto_fix.enabled: false` by default (requires Claude Code Action or Codex GitHub app)
+- Leave `github.repo` commented out (user sets this for their repo)
+- Don't include `binary` for providers (auto-detected)
+- Use `timeout_sec: 3600` (1 hour) for main timeout
+- Use `postprocess.timeout_sec: 600` (10 min) for reduction
 
 ## Prompt Generation Guidelines
 

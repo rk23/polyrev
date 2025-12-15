@@ -1,7 +1,11 @@
+pub mod enqueue;
 pub mod init;
 pub mod issue;
+pub mod plan;
+pub mod postprocess;
 pub mod run;
 pub mod schema;
+pub mod tui;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -33,8 +37,31 @@ pub enum Commands {
     /// Initialize polyrev: analyze repo, generate config and prompts
     Init(InitArgs),
 
+    /// Run postprocessing on existing findings (dedupe/cluster)
+    Postprocess(PostprocessArgs),
+
+    /// Generate task DAG from a spec using parallel planning perspectives
+    Plan(PlanArgs),
+
+    /// Enqueue tasks from a plan to tandem
+    Enqueue(EnqueueArgs),
+
+    /// Launch interactive TUI for viewing findings and plans
+    Tui(TuiArgs),
+
     /// Print JSON Schema for config validation
     Schema,
+}
+
+#[derive(Parser, Clone)]
+pub struct PostprocessArgs {
+    /// Config file
+    #[arg(short, long, default_value = "polyrev.yaml")]
+    pub config: PathBuf,
+
+    /// Report directory containing findings
+    #[arg(long)]
+    pub report_dir: Option<PathBuf>,
 }
 
 #[derive(Parser, Clone)]
@@ -74,6 +101,10 @@ pub struct RunArgs {
     /// Force re-run even if reviewer already ran today
     #[arg(long)]
     pub force: bool,
+
+    /// Create GitHub issues after run completes
+    #[arg(long)]
+    pub create_issues: bool,
 }
 
 #[derive(Parser, Clone)]
@@ -140,4 +171,101 @@ pub struct InitArgs {
     /// Overwrite existing files
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Parser, Clone)]
+pub struct PlanArgs {
+    /// The spec/feature to plan (can be multiple words)
+    #[arg(value_name = "SPEC")]
+    pub spec: Vec<String>,
+
+    /// Read spec from file
+    #[arg(long)]
+    pub file: Option<PathBuf>,
+
+    /// Fetch spec from GitHub issue number
+    #[arg(long)]
+    pub issue: Option<u64>,
+
+    /// Config file
+    #[arg(short, long, default_value = "polyrev.yaml")]
+    pub config: PathBuf,
+
+    /// Only run specific perspectives (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub perspectives: Option<Vec<String>>,
+
+    /// Auto-select perspectives based on task (uses AI to choose)
+    #[arg(long)]
+    pub auto_select: bool,
+
+    /// Maximum perspectives to run (with --auto-select, or limits --perspectives)
+    #[arg(long, default_value = "4")]
+    pub max_perspectives: usize,
+
+    /// Preview without executing
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Skip the reduce step, output raw fragments
+    #[arg(long)]
+    pub skip_reduce: bool,
+
+    /// Save intermediate fragments for debugging
+    #[arg(long)]
+    pub save_fragments: bool,
+
+    /// Auto-approve without prompting
+    #[arg(short, long)]
+    pub yes: bool,
+
+    /// Don't enqueue tasks to tandem after approval
+    #[arg(long)]
+    pub no_enqueue: bool,
+}
+
+#[derive(Parser, Clone)]
+pub struct EnqueueArgs {
+    /// Path to plan.json file
+    #[arg(long, required = true)]
+    pub plan: PathBuf,
+
+    /// Config file (for Claude CLI binary path)
+    #[arg(short, long, default_value = "polyrev.yaml")]
+    pub config: PathBuf,
+
+    /// Path to tandem SQLite database
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+
+    /// Prefix for task external IDs (default: plan filename)
+    #[arg(long)]
+    pub prefix: Option<String>,
+
+    /// Preview without enqueuing
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Force enqueue even with unanswered questions or existing tasks
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Parser, Clone)]
+pub struct TuiArgs {
+    /// Load findings from JSON file
+    #[arg(long)]
+    pub findings: Option<PathBuf>,
+
+    /// Load plan from JSON file
+    #[arg(long)]
+    pub plan: Option<PathBuf>,
+
+    /// Reports directory to scan for findings
+    #[arg(long, default_value = "reports")]
+    pub report_dir: PathBuf,
+
+    /// Start in plan view (vs findings view)
+    #[arg(long)]
+    pub plan_mode: bool,
 }

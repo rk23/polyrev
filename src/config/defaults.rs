@@ -53,7 +53,11 @@ pub fn default_codex_binary() -> PathBuf {
 }
 
 pub fn default_codex_model() -> String {
-    "gpt-4.1".to_string()
+    "gpt-5.1-codex-max".to_string()
+}
+
+pub fn default_claude_model() -> String {
+    "claude-opus-4-5-20251101".to_string()
 }
 
 pub fn default_max_attempts() -> u32 {
@@ -86,4 +90,12 @@ pub fn default_postprocess_min_findings() -> usize {
 
 pub fn default_false() -> bool {
     false
+}
+
+pub fn default_auto_fix_agent() -> String {
+    "claude".to_string()
+}
+
+pub fn default_auto_fix_prompt() -> String {
+    "Please fix this issue following the remediation guidance above and create a pull request with your changes.".to_string()
 }

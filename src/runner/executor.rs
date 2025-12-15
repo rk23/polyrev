@@ -219,8 +219,20 @@ pub async fn execute_reviewer(
 
                 // Only parse findings from the final chunk (or single chunk)
                 if chunk_idx + 1 == total_chunks {
-                    let findings =
+                    let mut findings =
                         parse_findings(&output.stdout, &reviewer.id, reviewer.priority_default);
+                    // Set the model on each finding based on provider
+                    let model = match reviewer.provider {
+                        crate::config::Provider::ClaudeCli => {
+                            Some(config.providers.claude_cli.model.clone())
+                        }
+                        crate::config::Provider::CodexCli => {
+                            Some(config.providers.codex_cli.model.clone())
+                        }
+                    };
+                    for finding in &mut findings {
+                        finding.model = model.clone();
+                    }
                     all_findings.extend(findings);
                 } else {
                     debug!(

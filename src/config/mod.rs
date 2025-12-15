@@ -4,7 +4,32 @@ mod types;
 pub use types::*;
 
 use crate::error::ConfigError;
+use defaults::*;
+use std::collections::HashMap;
 use std::path::Path;
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: default_version(),
+            target: default_target(),
+            concurrency: default_concurrency(),
+            report_dir: default_report_dir(),
+            dry_run: false,
+            diff_base: None,
+            github: GithubConfig::default(),
+            providers: ProvidersConfig::default(),
+            retry: RetryConfig::default(),
+            postprocess: PostProcessConfig::default(),
+            planning: None,
+            timeout_sec: default_timeout_sec(),
+            max_files: default_max_files(),
+            launch_delay_ms: default_launch_delay_ms(),
+            scopes: HashMap::new(),
+            reviewers: Vec::new(),
+        }
+    }
+}
 
 impl Config {
     /// Load config from a YAML file

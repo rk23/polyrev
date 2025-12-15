@@ -7,7 +7,7 @@ dry_run: false
 
 github:
   enabled: true
-  repo: null
+  repo: null # e.g., "owner/repo"
   labels: ["polyrev", "automated-review"]
   assignees: []
   dedupe: true
